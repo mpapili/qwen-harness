@@ -1,186 +1,92 @@
-# GreenLine Mowers - Single-Page Website
+# qwen-harness
 
-A modern, responsive single-page website for GreenLine Mowers - a company that sells, leases, and finances lawn mowers.
+A 3-agent agentic workflow harness that uses [Qwen Code](https://github.com/QwenLM/qwen-code) CLI to autonomously process tasks in a loop. Drop a task file in `tasks/`, and the agents will plan it, implement it, and QA it — automatically.
 
-## Features
+## How it works
 
-- **Responsive Design**: Mobile-first approach with breakpoints for tablet and desktop
-- **Product Catalog**: 8 lawn mower products with detailed specifications
-- **Payment Method Toggle**: Switch between Buy/Lease/Finance views
-- **Financing Calculator**: Interactive payment estimator with loan calculations
-- **Comparison Table**: Side-by-side comparison of payment options
-- **FAQ Section**: Accordion-style frequently asked questions
-- **Contact Form**: Validated contact form with success feedback
-- **Accessibility**: ARIA labels, keyboard navigation, focus indicators, and reduced motion support
-
-## File Structure
+Three agents run concurrently, each polling their input directory every 5 seconds:
 
 ```
-/workspace/
-├── index.html          # Main HTML file with all sections
-├── styles.css          # Complete CSS styling with custom properties
-├── app.js              # JavaScript functionality and mock data
-├── serve.sh            # HTTP server script (port 8000)
-└── README.md           # This documentation file
+tasks/ --> [Agent1: Listener] --> action-items/ --> [Agent2: Doer] --> outputs/ + ready-for-qa/
+                                                                                       |
+tasks/ <-- (new work items if bugs found) <-- [Agent3: QA] <--------------------------+
 ```
 
-## Quick Start
+| Agent | Script | Input | Output |
+|-------|--------|-------|--------|
+| Listener | `agent1_listener.sh` | `tasks/*.md` | `action-items/action_N.md` |
+| Doer | `agent2_doer.sh` | `action-items/*.md` | `outputs/implementation_*.md` + `ready-for-qa/` |
+| QA | `agent3_qa.sh` | `ready-for-qa/task_*.md` | QA report; creates new `tasks/` items if bugs found |
 
-### Option 1: Using the serve.sh script
+Each agent calls `qwen --yolo --prompt "..."` with its system prompt and the file contents.
+
+## Prerequisites
+
+- Docker (or Podman)
+- A running **llama-cpp** (or any OpenAI-compatible) server — defaults to `http://host.docker.internal:8080`
+
+## Setup
+
+Build and enter the container:
 
 ```bash
-# Make the script executable (if not already done)
-chmod +x serve.sh
-
-# Run the server
-./serve.sh
+chmod +x run-qwen-code.sh
+./run-qwen-code.sh
 ```
 
-### Option 2: Manual Python server
+This builds a `qwen-code-cli` Docker image (Node 20 + Qwen Code CLI) and drops you into a shell with your current directory mounted at `/workspace`.
+
+The container connects to your host's llama-cpp server at:
+```
+http://host.docker.internal:8080
+```
+Change `OPENAI_BASE_URL` in `run-qwen-code.sh` if your server runs elsewhere.
+
+## Usage
+
+Inside the container, start all three agents:
 
 ```bash
-# Using Python 3
-python3 -m http.server 8000
-
-# Or using Python 2
-python -m SimpleHTTPServer 8000
+./agent_controller.sh
 ```
 
-### Option 3: Other HTTP servers
+Then drop a task file into `tasks/`:
 
 ```bash
-# Using Node.js (http-server)
-npx http-server -p 8000
-
-# Using PHP
-php -S localhost:8000
+cat > tasks/my_task.md << 'EOF'
+Create a simple Python CLI tool that converts Celsius to Fahrenheit.
+EOF
 ```
 
-## Access the Website
+The agents will pick it up within 5 seconds and begin processing. Watch the terminal for progress. Press `Ctrl+C` to stop all agents.
 
-Once the server is running, open your browser and navigate to:
+### Run agents individually
 
-```
-http://localhost:8000
-```
-
-## Testing Checklist
-
-### Visual Testing
-
-- [ ] All sections render correctly on desktop (1440px)
-- [ ] Mobile responsive layout works on 375px
-- [ ] Navigation is sticky and scrolls to sections
-- [ ] Hero section displays with proper tagline
-- [ ] Product cards show correct pricing based on filter
-
-### Functional Testing
-
-- [ ] Product tabs switch and filter correctly (All/Buy/Lease/Finance)
-- [ ] "View Details" modal opens and closes
-- [ ] Modal can be closed with Escape key
-- [ ] Financing calculator produces believable results
-- [ ] FAQ accordion expands/collapses
-- [ ] Contact form validates input and shows success message
-
-### Accessibility Testing
-
-- [ ] All buttons have hover states
-- [ ] Keyboard navigation works (tab order, focus outlines)
-- [ ] ARIA labels present on interactive elements
-- [ ] Color contrast meets WCAG standards
-- [ ] Reduced motion respected
-
-### Browser Compatibility
-
-Test in:
-- [ ] Chrome (latest)
-- [ ] Firefox (latest)
-- [ ] Safari (latest)
-- [ ] Edge (latest)
-
-## Product Data
-
-The website includes 8 lawn mower products:
-
-| Model | Type | Buy Price | Lease | Finance |
-|-------|------|-----------|-------|---------|
-| GreenLine Pro 500 | Riding Mower | $2,499 | $79/mo (36mo) | $69/mo @ 5.9% APR |
-| EcoCut Elite | Electric | $1,899 | $59/mo (24mo) | $49/mo @ 4.9% APR |
-| PowerMax 65 | Riding Mower | $3,499 | $99/mo (48mo) | $89/mo @ 6.9% APR |
-| Compact Pro | Push Mower | $599 | $29/mo (12mo) | $24/mo @ 7.9% APR |
-| SilentCut 30 | Electric | $1,299 | $45/mo (24mo) | $39/mo @ 5.5% APR |
-| Heavy Duty 72 | Zero-Turn | $5,999 | $149/mo (60mo) | $139/mo @ 7.5% APR |
-| Garden Master | Riding Mower | $2,199 | $69/mo (36mo) | $59/mo @ 6.5% APR |
-| EcoLite 24 | Push Mower | $799 | $35/mo (18mo) | $29/mo @ 6.0% APR |
-
-## Color Scheme
-
-- **Primary Green**: #2D8659
-- **Primary Light**: #4CAF50
-- **Accent Orange**: #FF6B35
-- **Background**: #F5F5F0
-- **Text**: #333333
-
-## Technologies Used
-
-- HTML5 (semantic elements)
-- CSS3 (custom properties, grid, flexbox, media queries)
-- JavaScript (ES6+, no external dependencies)
-- Google Fonts (Inter)
-
-## Customization
-
-### Adding New Products
-
-Edit the `products` array in `app.js`:
-
-```javascript
-{
-    id: 9,
-    model: 'Your New Model',
-    type: 'Product Type',
-    specs: {
-        cuttingWidth: 'XX"',
-        powerSource: 'Type',
-        // additional specs...
-    },
-    prices: {
-        buy: 0000,
-        leaseMonthly: 00,
-        leaseTerm: 00,
-        financeMonthly: 00,
-        financeAPR: 0.0,
-        financeTerm: 00
-    },
-    available: { buy: true, lease: true, finance: true },
-    description: 'Product description...'
-}
+```bash
+./agent1_listener.sh   # listener only
+./agent2_doer.sh       # doer only
+./agent3_qa.sh         # QA only
 ```
 
-### Modifying Colors
+## Sample task
 
-Edit the CSS custom properties in `styles.css`:
+`tasks/create_site.md` is an included example prompt that asks Qwen to build a full lawn-mower e-commerce single-page site — useful for a quick sanity-check of the pipeline.
 
-```css
-:root {
-    --color-primary: #2D8659;
-    --color-accent: #FF6B35;
-    /* ... */
-}
+## Directory structure
+
 ```
-
-## Known Limitations
-
-- Server is for development/testing only (not production-ready)
-- Payment calculator uses simplified loan formula
-- Form submission is simulated (no backend)
-- Images are CSS-based placeholders
-
-## License
-
-This project is provided as-is for educational and demonstration purposes.
-
-## Support
-
-For issues or questions, please refer to the action item documentation or contact the project maintainer.
+qwen-harness/
+├── agent_controller.sh        # Starts all three agents
+├── agent1_listener.sh         # Task → action item
+├── agent2_doer.sh             # Action item → implementation
+├── agent3_qa.sh               # Implementation → QA report / new work items
+├── system-prompts/
+│   ├── agent1-listener.md     # System prompt for Agent1
+│   ├── agent2-doer.md         # System prompt for Agent2
+│   └── agent3-qa.md           # System prompt for Agent3
+├── tasks/                     # Drop .md task files here
+├── action-items/              # Agent1 output
+├── outputs/                   # Agent2 implementations
+├── ready-for-qa/              # Agent2 → Agent3 handoff
+├── Dockerfile                 # qwen-code-cli image
+└── run-qwen-code.sh           # Build + run the container
