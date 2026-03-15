@@ -3,7 +3,7 @@
 # Manages multiple qwen agents with configurable concurrency
 
 # Default number of agents
-NUM_AGENTS="${NUM_AGENTS:-1}"
+export NUM_AGENTS="${NUM_AGENTS:-1}"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do

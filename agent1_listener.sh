@@ -9,6 +9,7 @@ SYSTEM_PROMPT="./system-prompts/agent1-listener.md"
 CHECK_INTERVAL=5
 LOGS_DIR="./agent-logs"
 LOG_FILE="$LOGS_DIR/agent1-listener.log"
+NUM_AGENTS="${NUM_AGENTS:-1}"
 
 # Ensure directories exist
 mkdir -p "$TASKS_DIR" "$ACTION_ITEMS_DIR" "$LOGS_DIR"
@@ -20,6 +21,25 @@ exec 9>"$LOCK_FILE"
 flock -n 9 || { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Agent1] Another instance already running — exiting." | tee -a "$LOG_FILE"; exit 1; }
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
+
+# LLM semaphore helpers - acquire/release slots based on NUM_AGENTS
+_acquire_llm_slot() {
+    local n="${NUM_AGENTS:-1}"
+    while true; do
+        for i in $(seq 1 "$n"); do
+            exec 10>"$LOGS_DIR/llm-slot-$i.lock"
+            if flock -n 10; then
+                return
+            fi
+            exec 10>&-
+        done
+        sleep 1
+    done
+}
+
+_release_llm_slot() {
+    exec 10>&-
+}
 
 # Read a task file and get its name
 read_task() {
@@ -62,10 +82,12 @@ $task_content
     local run_log
     run_log=$(mktemp /tmp/qwen-run-XXXXXX.log)
     export QWEN_PROMPT="$qwen_prompt"
+    _acquire_llm_slot
     script -q -e -c 'qwen --yolo --prompt "$QWEN_PROMPT"' "$run_log" \
         | sed --unbuffered 's/\x1b\[[0-9;]*[mGKHFJP]//g; s/\r//g' \
         | tee -a "$LOG_FILE"
     local script_exit=${PIPESTATUS[0]}
+    _release_llm_slot
     unset QWEN_PROMPT
     rm -f "$run_log"
     log "--- qwen output end ---"
