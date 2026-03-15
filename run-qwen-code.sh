@@ -5,8 +5,9 @@ IMAGE_NAME="qwen-code-cli"
 
 # Build the image if it doesn't exist
 if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
-  echo "Image '$IMAGE_NAME' not found. Building..."
-  docker build -t "$IMAGE_NAME" "$SCRIPT_DIR"
+  echo "Image '$IMAGE_NAME' not found. Building..." >&2
+  docker build -t "$IMAGE_NAME" "$SCRIPT_DIR" >&2
+  echo >&2   # ensure clean newline before interactive session
 fi
 
 # Mount Docker socket so the container can run docker/podman commands

@@ -1,116 +1,108 @@
 #!/bin/bash
 # Agent1: Task Listener Harness Script
-# Monitors tasks directory and creates action items
+# Monitors tasks/ for .md files, calls qwen to produce an action item,
+# then moves the task to tasks/finished/ (exit 0) or tasks/failed/ (non-zero).
 
 TASKS_DIR="./tasks"
 ACTION_ITEMS_DIR="./action-items"
 SYSTEM_PROMPT="./system-prompts/agent1-listener.md"
 CHECK_INTERVAL=5
+LOGS_DIR="./agent-logs"
+LOG_FILE="$LOGS_DIR/agent1-listener.log"
 
 # Ensure directories exist
-mkdir -p "$TASKS_DIR" "$ACTION_ITEMS_DIR"
+mkdir -p "$TASKS_DIR" "$ACTION_ITEMS_DIR" "$LOGS_DIR"
 
-# Generate unique timestamp for action item files
-get_timestamp() {
-    date +"%Y%m%d_%H%M%S"
-}
+# Acquire exclusive lock — exit immediately if another instance is running
+LOCK_FILE="$LOGS_DIR/agent1-listener.lock"
+STATUS_FILE="$LOGS_DIR/agent1-listener.status"
+exec 9>"$LOCK_FILE"
+flock -n 9 || { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Agent1] Another instance already running — exiting." | tee -a "$LOG_FILE"; exit 1; }
 
-# Get next available action item number
-get_next_action_number() {
-    local max=0
-    for f in "$ACTION_ITEMS_DIR"/action_*.md; do
-        if [[ -f "$f" ]]; then
-            num=$(basename "$f" | sed 's/action_\([0-9]*\)\.md/\1/')
-            if [[ "$num" -gt "$max" ]]; then
-                max=$num
-            fi
-        fi
-    done
-    echo $((max + 1))
-}
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 
 # Read a task file and get its name
 read_task() {
     local task_file="$1"
-    local task_name
-    task_name=$(basename "$task_file" .md)
-    echo "$task_name"
+    basename "$task_file" .md
 }
 
 # Create action item for a task
 create_action_item() {
     local task_file="$1"
     local task_name="$2"
-    local action_number
-    action_number=$(get_next_action_number)
-    local action_file="$ACTION_ITEMS_DIR/action_${action_number}.md"
-    local timestamp
-    timestamp=$(get_timestamp)
-    
+
     # Read the system prompt
     local system_prompt_content
     system_prompt_content=$(cat "$SYSTEM_PROMPT")
-    
+
     # Read the task file content
     local task_content
     task_content=$(cat "$task_file")
-    
-    # Create the prompt for qwen
-    local qwen_prompt="You are a Task Listener Agent. Your job is to analyze this task and create a detailed action item.
 
-TASK FILE CONTENT:
-$task_content
+    # Create the prompt for qwen
+    local qwen_prompt="You are a Task Listener Agent. Your job is to analyze the task below and produce ONE detailed action item markdown file.
 
 SYSTEM PROMPT:
 $system_prompt_content
 
-Please create a detailed action item markdown file that includes:
-1. A clear description of what needs to be done
-2. Implementation steps
-3. Tools needed
-4. Testing criteria
-5. Any notes or warnings
+TASK FILE CONTENT:
+$task_content
 
-Output only the markdown content for the action item file."
+=== CRITICAL CONSTRAINTS ===
+- DO NOT write any code. DO NOT create any implementation files or directories.
+- Your ONLY output is a SINGLE action item markdown file written to /workspace/action-items/
+- Use a descriptive filename based on the task (e.g. build_contact_form.md).
+- Do NOT use numbered filenames like action_1.md.
+- The file must follow the action item format from the system prompt above.
+- Once you have written the file, you are done. Stop immediately."
 
-    # Call qwen to generate the action item
-    echo "Processing task: $task_name"
-    qwen_output=$(qwen --yolo --prompt "$qwen_prompt" 2>&1)
-    
-    # Write the action item
-    echo "$qwen_output" > "$action_file"
-    
-    echo "Created action item: $action_file"
-    
-    # Move the task file to finished directory
-    TASK_FINISHED_DIR="$TASKS_DIR/finished"
-    mkdir -p "$TASK_FINISHED_DIR"
-    mv "$task_file" "$TASK_FINISHED_DIR/"
-    echo "Moved task to: $TASK_FINISHED_DIR/"
+    log "Processing task: $task_name"
+    log "--- qwen output start ---"
+    local run_log
+    run_log=$(mktemp /tmp/qwen-run-XXXXXX.log)
+    export QWEN_PROMPT="$qwen_prompt"
+    script -q -e -c 'qwen --yolo --prompt "$QWEN_PROMPT"' "$run_log" \
+        | sed --unbuffered 's/\x1b\[[0-9;]*[mGKHFJP]//g; s/\r//g' \
+        | tee -a "$LOG_FILE"
+    local script_exit=${PIPESTATUS[0]}
+    unset QWEN_PROMPT
+    rm -f "$run_log"
+    log "--- qwen output end ---"
+    log "qwen exit code: $script_exit"
+
+    # Move the task file based on exit code
+    if [[ $script_exit -eq 0 ]]; then
+        mkdir -p "$TASKS_DIR/finished"
+        mv "$task_file" "$TASKS_DIR/finished/"
+        log "Task succeeded — moved to finished: $(basename "$task_file")"
+    else
+        mkdir -p "$TASKS_DIR/failed"
+        mv "$task_file" "$TASKS_DIR/failed/"
+        log "Task FAILED (exit $script_exit) — moved to failed: $(basename "$task_file")"
+    fi
 }
 
 # Main loop
-echo "=== Agent1: Task Listener Started ==="
-echo "Monitoring: $TASKS_DIR"
-echo "Output: $ACTION_ITEMS_DIR"
-echo "Check interval: ${CHECK_INTERVAL}s"
+log "=== Agent1: Task Listener Started ==="
+log "Monitoring: $TASKS_DIR"
+log "Output: $ACTION_ITEMS_DIR"
+log "Check interval: ${CHECK_INTERVAL}s"
+log "Log file: $LOG_FILE"
 echo "Press Ctrl+C to stop"
 echo ""
 
+echo "idle" > "$STATUS_FILE"
+
 while true; do
-    # Find all .md files in tasks directory
+    shopt -s nullglob
     task_files=("$TASKS_DIR"/*.md)
-    
-    # Check if any task files exist
-    if [[ -e "${task_files[0]}" ]]; then
-        for task_file in "${task_files[@]}"; do
-            if [[ -f "$task_file" ]]; then
-                task_name=$(read_task "$task_file")
-                create_action_item "$task_file" "$task_name"
-            fi
-        done
-    fi
-    
-    # Wait before next check
+    shopt -u nullglob
+    for task_file in "${task_files[@]}"; do
+        task_name=$(read_task "$task_file")
+        echo "Processing: $task_name" > "$STATUS_FILE"
+        create_action_item "$task_file" "$task_name"
+        echo "idle" > "$STATUS_FILE"
+    done
     sleep $CHECK_INTERVAL
 done

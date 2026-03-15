@@ -61,8 +61,29 @@ echo "Starting agents..."
 echo "Press Ctrl+C to stop all agents"
 echo ""
 
-# Array to store agent PIDs
+# Array to store agent PIDs and metadata
 declare -a AGENT_PIDS
+declare -a AGENT_NAMES
+declare -a AGENT_STATUS_FILES
+
+STATUS_INTERVAL=30
+LOGS_DIR="./agent-logs"
+
+print_status() {
+    echo "=== Pipeline Status [$(date '+%H:%M:%S')] ==="
+    for i in "${!AGENT_PIDS[@]}"; do
+        local pid="${AGENT_PIDS[$i]}"
+        local name="${AGENT_NAMES[$i]}"
+        local status_file="${AGENT_STATUS_FILES[$i]}"
+        if kill -0 "$pid" 2>/dev/null; then
+            local current_task
+            current_task=$(cat "$status_file" 2>/dev/null || echo "idle")
+            printf "  %-18s (PID %-6s)  RUNNING   %s\n" "$name" "$pid" "$current_task"
+        else
+            printf "  %-18s (PID %-6s)  STOPPED\n" "$name" "$pid"
+        fi
+    done
+}
 
 # Function to start an agent
 start_agent() {
@@ -70,16 +91,20 @@ start_agent() {
     local agent_script="$2"
     local agent_name="$3"
     
+    local agent_status_file="$4"
+
     echo "[Agent] Starting $agent_name..."
-    
+
     # Make script executable if needed
     chmod +x "$agent_script"
-    
+
     # Start the agent in background
     bash "$agent_script" &
     local pid=$!
     AGENT_PIDS+=("$pid")
-    
+    AGENT_NAMES+=("$agent_name")
+    AGENT_STATUS_FILES+=("$agent_status_file")
+
     echo "[Agent] $agent_name started with PID: $pid"
 }
 
@@ -102,12 +127,13 @@ stop_all_agents() {
 # Set up signal handler for clean shutdown
 trap stop_all_agents SIGINT SIGTERM
 
-# Start the agents
-# We'll start all three agent types, but limit total concurrent qwen calls
+# Start the agents with a 1-second delay between each to avoid race conditions
 # Each agent script can spawn qwen commands, so we're managing the agent processes
-start_agent "listener" "./agent1_listener.sh" "Listener (Agent1)"
-start_agent "doer" "./agent2_doer.sh" "Doer (Agent2)"
-start_agent "qa" "./agent3_qa.sh" "QA (Agent3)"
+start_agent "listener" "./agent1_listener.sh" "Agent1 Listener" "$LOGS_DIR/agent1-listener.status"
+sleep 1
+start_agent "doer" "./agent2_doer.sh" "Agent2 Doer" "$LOGS_DIR/agent2-doer.status"
+sleep 1
+start_agent "qa" "./agent3_qa.sh" "Agent3 QA" "$LOGS_DIR/agent3-qa.status"
 
 echo ""
 echo "========================================"
@@ -117,10 +143,11 @@ echo ""
 echo "Agent Status:"
 for i in "${!AGENT_PIDS[@]}"; do
     pid="${AGENT_PIDS[$i]}"
+    name="${AGENT_NAMES[$i]}"
     if kill -0 "$pid" 2>/dev/null; then
-        echo "  [Running] Agent $((i+1)) (PID: $pid)"
+        echo "  [Running] $name (PID: $pid)"
     else
-        echo "  [Stopped] Agent $((i+1)) (PID: $pid)"
+        echo "  [Stopped] $name (PID: $pid)"
     fi
 done
 echo ""
@@ -129,18 +156,24 @@ echo "Press Ctrl+C to stop all agents"
 echo ""
 
 # Keep the controller running and monitor agents
+last_status_time=0
 while true; do
+    now=$(date +%s)
+
+    # Print status on startup and every STATUS_INTERVAL seconds
+    if (( now - last_status_time >= STATUS_INTERVAL )); then
+        print_status
+        last_status_time=$now
+    fi
+
     # Check if any agents have crashed
     for i in "${!AGENT_PIDS[@]}"; do
         pid="${AGENT_PIDS[$i]}"
+        name="${AGENT_NAMES[$i]}"
         if ! kill -0 "$pid" 2>/dev/null; then
-            echo "[Warning] Agent $((i+1)) (PID: $pid) has crashed!"
-            # Optionally restart the agent
-            # agent_type=($(echo "$i" | awk '{if($1==0)print "listener"; if($1==1)print "doer"; if($1==2)print "qa"}'))
-            # start_agent "agent_type" "./agent${i+1}_agent.sh" "Agent $((i+1))"
+            echo "[Warning] $name (PID: $pid) has crashed!"
         fi
     done
-    
-    # Sleep before checking again
+
     sleep 5
 done

@@ -1,0 +1,16 @@
+# ── Runtime output & demo artifacts ──────────────────────────────────────────
+outputs/
+agent-logs/
+screenshots/
+scratch/
+
+# ── Agent runtime queues & reports ───────────────────────────────────────────
+action-items/
+ready-for-qa/
+tasks/
+
+# ── Playwright session state ──────────────────────────────────────────────────
+.playwright-session.json
+
+# ── Local IDE / tool config ───────────────────────────────────────────────────
+.claude/

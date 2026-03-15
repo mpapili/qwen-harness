@@ -1,145 +1,31 @@
 #!/bin/bash
 # Agent3: QA Agent Harness Script
-# Monitors ready-for-qa directory and creates work items
+# Monitors ready-for-qa/ for .md files, calls qwen to actively test the implementation,
+# then moves the task to ready-for-qa/finished/ (exit 0) or ready-for-qa/failed/ (non-zero).
 
 READY_FOR_QA_DIR="./ready-for-qa"
+QA_FINAL_REPORT_DIR="./ready-for-qa/qa-final-report"
 OUTPUTS_DIR="./outputs"
 TASKS_DIR="./tasks"
 SYSTEM_PROMPT="./system-prompts/agent3-qa.md"
 CHECK_INTERVAL=5
+LOGS_DIR="./agent-logs"
+LOG_FILE="$LOGS_DIR/agent3-qa.log"
 
 # Ensure directories exist
-mkdir -p "$READY_FOR_QA_DIR" "$OUTPUTS_DIR" "$TASKS_DIR"
+mkdir -p "$READY_FOR_QA_DIR" "$QA_FINAL_REPORT_DIR" "$OUTPUTS_DIR" "$TASKS_DIR" "$LOGS_DIR"
+
+# Acquire exclusive lock — exit immediately if another instance is running
+LOCK_FILE="$LOGS_DIR/agent3-qa.lock"
+STATUS_FILE="$LOGS_DIR/agent3-qa.status"
+exec 9>"$LOCK_FILE"
+flock -n 9 || { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Agent3] Another instance already running — exiting." | tee -a "$LOG_FILE"; exit 1; }
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 
 # Generate unique timestamp
 get_timestamp() {
     date +"%Y%m%d_%H%M%S"
-}
-
-# Read the QA task file
-read_qa_task() {
-    local task_file="$1"
-    if [[ -f "$task_file" ]]; then
-        cat "$task_file"
-    fi
-}
-
-# Read the actual implementation from outputs directory
-read_implementation() {
-    local content=""
-    # Read all implementation files from outputs/
-    for f in "$OUTPUTS_DIR"/implementation_*.md; do
-        if [[ -f "$f" ]]; then
-            content+="=== $(basename "$f") ===\n"
-            content+=$(cat "$f")
-            content+=$'\n\n'
-        fi
-    done
-    echo "$content"
-}
-
-# Parse work items from QA output and create task files
-parse_and_create_work_items() {
-    local qwen_output="$1"
-    local impl_name="$2"
-    local work_item_count=0
-
-    # Ensure tasks directory exists
-    mkdir -p "$TASKS_DIR"
-
-    # Check if output contains work items section
-    if echo "$qwen_output" | grep -q "## Work Items"; then
-        # Extract work items from the output
-        local in_work_items=false
-        local current_work_item=""
-        local work_item_number=1
-
-        while IFS= read -r line; do
-            if [[ "$line" =~ ^##\ Work\ Items ]]; then
-                in_work_items=true
-                continue
-            fi
-
-            if $in_work_items; then
-                # Check for new work item marker
-                if [[ "$line" =~ ^-\ \*\*Work\ Item\*\*: ]]; then
-                    # Save previous work item if exists
-                    if [[ -n "$current_work_item" ]]; then
-                        create_work_item_file "$current_work_item" "$impl_name" "$work_item_count"
-                        ((work_item_count++))
-                        work_item_number=1
-                    fi
-                    current_work_item="$line"$'\n'
-                elif [[ "$line" =~ ^##\ [A-Z] ]]; then
-                    # New section started, save last work item
-                    if [[ -n "$current_work_item" ]]; then
-                        create_work_item_file "$current_work_item" "$impl_name" "$work_item_count"
-                        ((work_item_count++))
-                    fi
-                    in_work_items=false
-                    current_work_item=""
-                else
-                    current_work_item+="$line"$'\n'
-                fi
-            fi
-        done <<< "$qwen_output"
-
-        # Save last work item if exists
-        if [[ -n "$current_work_item" ]]; then
-            create_work_item_file "$current_work_item" "$impl_name" "$work_item_count"
-            ((work_item_count++))
-        fi
-    fi
-
-    echo "Created $work_item_count work item(s) from QA output"
-}
-
-# Create a work item file from extracted content
-create_work_item_file() {
-    local work_item_content="$1"
-    local impl_name="$2"
-    local item_index="$3"
-    local work_item_number=$((item_index + 1))
-    local work_item_file="$TASKS_DIR/work_item_${work_item_number}_${impl_name}.md"
-
-    # Extract values using sed (more portable than grep -P)
-    local priority=$(echo "$work_item_content" | grep "Priority" | sed 's/.*Priority.*:.*//' | sed 's/^[[:space:]]*//' | tr -d '\n')
-    local work_item_summary=$(echo "$work_item_content" | grep "Work Item" | sed 's/.*Work Item.*:.*//' | sed 's/^[[:space:]]*//' | tr -d '\n')
-    local issue_desc=$(echo "$work_item_content" | grep "Issue" | sed 's/.*Issue.*:.*//' | sed 's/^[[:space:]]*//' | tr -d '\n')
-    local expected=$(echo "$work_item_content" | grep "Expected Behavior" | sed 's/.*Expected Behavior.*:.*//' | sed 's/^[[:space:]]*//' | tr -d '\n')
-    local actual=$(echo "$work_item_content" | grep "Actual Behavior" | sed 's/.*Actual Behavior.*:.*//' | sed 's/^[[:space:]]*//' | tr -d '\n')
-
-    # Set defaults if empty
-    [[ -z "$priority" ]] && priority="MEDIUM"
-    [[ -z "$work_item_summary" ]] && work_item_summary="Multiple issues found"
-    [[ -z "$issue_desc" ]] && issue_desc="See detailed description below"
-    [[ -z "$expected" ]] && expected="Implementation should work correctly"
-    [[ -z "$actual" ]] && actual="Implementation has bugs"
-
-    # Build the work item markdown
-    cat > "$work_item_file" << EOF
-# Work Item: Fix issues in $impl_name
-
-## Priority
-$priority
-
-## Issue Summary
-$work_item_summary
-
-## Problem Description
-$issue_desc
-
-## Expected Behavior
-$expected
-
-## Actual Behavior
-$actual
-
-## Action Required
-Review the implementation, fix the identified issues, and retest.
-EOF
-
-    echo "  Created work item: $work_item_file"
 }
 
 # Create QA test report for an implementation
@@ -148,84 +34,255 @@ create_qa_report() {
     local impl_name
     impl_name=$(basename "$task_file" .md)
 
+    # Kill any lingering web server from a crashed previous session
+    fuser -k 8080/tcp 2>/dev/null || true
+
+    # Clear stale screenshots from any previous QA run
+    rm -f /workspace/screenshots/screenshot_*.png 2>/dev/null || true
+    # Reset the playwright session screenshot counter to 0
+    if [[ -f /workspace/.playwright-session.json ]]; then
+        python3 -c "
+import json, sys
+with open('/workspace/.playwright-session.json') as f: d = json.load(f)
+d['count'] = 0
+with open('/workspace/.playwright-session.json', 'w') as f: json.dump(d, f, indent=2)
+" 2>/dev/null || true
+    fi
+
+    # Scratch dir for all test files — wiped when QA finishes
+    local qa_tmpdir
+    qa_tmpdir=$(mktemp -d /tmp/qa-XXXXXX)
+    log "QA scratch dir: $qa_tmpdir"
+
+    # Destination for the final QA report file
+    local report_file
+    report_file="$QA_FINAL_REPORT_DIR/report_${impl_name}_$(get_timestamp).md"
+
     # Read the QA task description
     local task_content
-    task_content=$(read_qa_task "$task_file")
+    task_content=$(cat "$task_file")
 
     # Read the system prompt
     local system_prompt_content
     system_prompt_content=$(cat "$SYSTEM_PROMPT")
 
-    # Read the actual implementation content from outputs
-    local impl_content
-    impl_content=$(read_implementation)
+    # Running findings log — one line per screenshot, reviewed at STEP 5 and then deleted
+    local qa_findings_log="$qa_tmpdir/findings.log"
+    touch "$qa_findings_log"
 
     # Create the prompt for qwen
-    local qwen_prompt="You are a QA Agent. Your job is to test and try to break this implementation.
+    local qwen_prompt="You are a QA Agent. You must ACTIVELY TEST the implementation below — do not write a report based on assumptions. Run real commands and report what you actually observe.
 
-SYSTEM PROMPT:
+== QA AGENT RULES ==
 $system_prompt_content
 
-QA TASK DESCRIPTION:
+== WHAT YOU ARE TESTING ==
 $task_content
 
-ACTUAL IMPLEMENTATION TO TEST (from outputs directory):
-$impl_content
+== SCRATCH DIRECTORY ==
+$qa_tmpdir
+Write ALL temporary test scripts here. Never write test files into /workspace directly.
 
-Please create a comprehensive QA test report that includes:
-1. Functional tests - does it work as expected?
-2. Edge case tests - empty input, boundary values, unexpected data
-3. Stress tests - large inputs, repeated operations
-4. Security tests - injection attempts, unauthorized access
-5. All test results with PASS/FAIL status
-6. Any bugs or issues found
-7. Recommendations for improvement
+== MANDATORY STEPS — EXECUTE IN ORDER ==
 
-IMPORTANT: If the implementation fails any critical tests or has bugs, you MUST create work items in the '## Work Items' section below, with each work item containing:
-- **Work Item**: Brief description of what needs to be fixed
-- **Priority**: HIGH/MEDIUM/LOW
-- **Issue**: Detailed description of the problem
-- **Expected Behavior**: What should happen
-- **Actual Behavior**: What actually happens
+STEP 1 — START THE SERVER
+Read the '## How to Run' section in the task above and run those exact commands in the background, e.g.:
+  cd /workspace/outputs/<app-dir> && python3 -m http.server 8000 &
+  sleep 2   # wait for server to be ready
 
-Output only the markdown content for the QA report."
+STEP 2 — VISUAL BROWSER TESTING WITH PLAYWRIGHT (REQUIRED — DO NOT SKIP)
+You MUST run playwright-tool.sh for every web app. These are real commands you must execute:
 
-    # Call qwen to generate the QA report
-    echo "Running QA on: $impl_name"
-    qwen_output=$(qwen --yolo --prompt "$qwen_prompt" 2>&1)
+FINDINGS LOG: After EVERY screenshot review, you MUST append exactly one line to:
+  $qa_findings_log
+Format: screenshot_NNN.png | STATUS | one-sentence finding
+Example: echo \"screenshot_001.png | PASS | Homepage loads correctly with hero image and nav\" >> $qa_findings_log
+This log is your running record — you will use it in STEP 5 to write the final report.
 
-    # Parse and create work items if QA is dissatisfied
-    echo "$qwen_output" | parse_and_create_work_items "$impl_name"
+HARD LIMIT: Stop visual testing after 20 screenshots maximum. Once the findings log has
+20 lines, call playwright-tool.sh stop and proceed to STEP 3 immediately.
+Check the count with: wc -l < $qa_findings_log
 
-    # Move the task file to finished directory
-    QA_FINISHED_DIR="$READY_FOR_QA_DIR/finished"
-    mkdir -p "$QA_FINISHED_DIR"
-    mv "$task_file" "$QA_FINISHED_DIR/"
-    echo "Moved QA task to: $QA_FINISHED_DIR/"
+  # Start persistent browser — keeps ALL page state (scroll, modals, forms) across every subsequent call
+  /workspace/agent-utils/playwright-tool.sh start-browser
+
+  # Take initial screenshot of the homepage
+  /workspace/agent-utils/playwright-tool.sh goto http://localhost:8000
+  # → prints: SCREENSHOT_SAVED: screenshots/screenshot_001.png
+
+  # Visually inspect it — open the screenshot file directly using your image viewing tool (do NOT
+  # spawn a nested qwen subprocess; you can read image files yourself with your built-in Read tool).
+  # Read the file at the path printed in SCREENSHOT_SAVED above (e.g. screenshots/screenshot_001.png).
+  # Classify its status using EXACTLY one of these labels:
+  #   SCREENSHOT_STATUS: PASS          — everything looks correct
+  #   SCREENSHOT_STATUS: BUGGY         — clear defect (broken layout, error message, wrong content)
+  #   SCREENSHOT_STATUS: APPEARS_BUGGY — something looks off (unexpected spacing, missing elements, wrong colours)
+  #   SCREENSHOT_STATUS: NOT_WORKING   — an interactive element had no visible effect after click/fill
+  # Then immediately log your finding (replace STATUS and description with your actual observation):
+  echo \"screenshot_001.png | STATUS | one-sentence finding\" >> $qa_findings_log
+
+  # Check limit before continuing: if findings log has 20 lines, stop now
+  if [[ \$(wc -l < $qa_findings_log) -ge 20 ]]; then /workspace/agent-utils/playwright-tool.sh stop; fi
+
+  # IMPORTANT: call goto EXACTLY ONCE per URL. Never call goto again during the same session.
+  # Use click, scroll, fill, hover for all subsequent interactions.
+
+  # BEFORE clicking anything, get real selectors from the live DOM:
+  /workspace/agent-utils/playwright-tool.sh inspect
+  # → prints ELEMENTS: [...] and NO_SCREENSHOT (inspect is data-only, no screenshot is saved)
+  # Read the ELEMENTS JSON output above and pick real selector values from it.
+  # Example: if ELEMENTS contains {\"selector\":\"#nav-products\"}, then run:
+  #   /workspace/agent-utils/playwright-tool.sh click \"#nav-products\"
+  # Do NOT use angle-bracket placeholders — substitute actual selector strings from the JSON.
+
+  # Test interactions — use the selector values returned by inspect above
+  # Scroll before clicking elements that may be below the fold:
+  /workspace/agent-utils/playwright-tool.sh scroll 0 800
+  # Then click a real selector from the ELEMENTS JSON (e.g. \"a.nav-link\", \"#submit-btn\"):
+  /workspace/agent-utils/playwright-tool.sh click \"SELECTOR_FROM_INSPECT_OUTPUT\"
+  # Fill inputs using real selectors from ELEMENTS JSON:
+  /workspace/agent-utils/playwright-tool.sh fill \"INPUT_SELECTOR_FROM_INSPECT\" \"test value\"
+
+  # If a selector click fails, fall back to coordinate click (estimate coords from the 1920x1080 screenshot):
+  /workspace/agent-utils/playwright-tool.sh clickxy 960 400
+
+  # After EACH action, inspect the new screenshot directly — use your built-in Read/image tool on
+  # the path printed in SCREENSHOT_SAVED (e.g. screenshots/screenshot_NNN.png).
+  # DO NOT run a nested \`qwen --yolo --prompt\` subprocess — that spawns a new qwen process and
+  # causes 15–30 second idle gaps where llama.cpp receives no requests at all.
+  # You are already running inside qwen; just open the image file yourself.
+  # Classify using one of: PASS | BUGGY | APPEARS_BUGGY | NOT_WORKING
+  # Then immediately log your finding:
+  echo \"screenshot_NNN.png | STATUS | one-sentence finding\" >> $qa_findings_log
+  # Check limit: if findings log has 20 lines, stop visual testing now
+  if [[ \$(wc -l < $qa_findings_log) -ge 20 ]]; then /workspace/agent-utils/playwright-tool.sh stop; fi
+
+  # When done (or when 20-screenshot limit reached)
+  /workspace/agent-utils/playwright-tool.sh stop
+
+STEP 3 — FUNCTIONAL / EDGE CASE TESTS
+Write one test script at a time to $qa_tmpdir, run it, record the result, delete it, then move to the next.
+Example:
+  cat > $qa_tmpdir/test_calc.js << 'EOF'
+  // test the calculator logic
+  EOF
+  node $qa_tmpdir/test_calc.js
+  rm $qa_tmpdir/test_calc.js
+
+STEP 4 — KILL THE SERVER
+  kill \$SERVER_PID 2>/dev/null || true
+
+STEP 5 — WRITE YOUR QA REPORT & TASK FILES
+Based only on what you ACTUALLY observed in steps 1-4:
+
+First, read your running findings log to review all one-line screenshot findings:
+  cat $qa_findings_log
+
+A. Write a markdown QA REPORT summarizing your findings to:
+   /workspace/$report_file
+
+   The report must include:
+   - A screenshot review table populated from your findings log: filename | status | one-line finding
+   - Functional test results (PASS/FAIL per test)
+   - Bugs and improvements found (list with reproduction steps)
+   - Overall assessment: PASS / NEEDS_FIXES
+
+B. If the overall assessment is NEEDS_FIXES, write ONE task file per bug/improvement to
+   /workspace/tasks/ so the Task Listener agent can plan fixes in the next cycle.
+
+   Filename pattern: /workspace/tasks/fix_\${impl_name}_\${issue_num}.md
+
+   Each file must follow this format exactly:
+   # Task: [Brief description of what needs fixing]
+
+   ## Issue
+   [Detailed description of the problem]
+
+   ## Expected Behavior
+   [What should happen]
+
+   ## Actual Behavior
+   [What actually happens]
+
+   ## Reproduction Steps
+   1. Step one
+   2. Step two
+   3. Observed result
+
+   ## Priority
+   HIGH / MEDIUM / LOW
+
+   Do NOT write task files if the overall assessment is PASS.
+
+C. Clean up the findings log now that the final report is written:
+     rm -f $qa_findings_log"
+
+    # Call qwen to run the QA.
+    log "Running QA on: $impl_name"
+    log "--- qwen output start ---"
+    local run_log
+    run_log=$(mktemp /tmp/qwen-run-XXXXXX.log)
+    export QWEN_PROMPT="$qwen_prompt"
+    script -q -e -c 'qwen --yolo --prompt "$QWEN_PROMPT"' "$run_log" \
+        | sed --unbuffered 's/\x1b\[[0-9;]*[mGKHFJP]//g; s/\r//g' \
+        | tee -a "$LOG_FILE"
+    local script_exit=${PIPESTATUS[0]}
+    unset QWEN_PROMPT
+    rm -f "$run_log"
+    log "--- qwen output end ---"
+    log "qwen exit code: $script_exit"
+
+    # Clean up scratch dir
+    rm -rf "$qa_tmpdir"
+    log "QA scratch dir cleaned up: $qa_tmpdir"
+
+    # Verify qwen wrote the final report file
+    if [[ -f "$report_file" ]]; then
+        log "QA final report written: $report_file"
+    else
+        log "WARNING: QA report was not created at $report_file"
+    fi
+
+    # Count any task files qwen wrote for issues found
+    local task_count
+    task_count=$(ls "$TASKS_DIR"/fix_${impl_name}_*.md 2>/dev/null | wc -l)
+    if [[ $task_count -gt 0 ]]; then
+        log "QA wrote $task_count fix task(s) to $TASKS_DIR/"
+    fi
+
+    # Move the QA task file based on exit code
+    if [[ $script_exit -eq 0 ]]; then
+        mkdir -p "$READY_FOR_QA_DIR/finished"
+        mv "$task_file" "$READY_FOR_QA_DIR/finished/"
+        log "QA succeeded — moved to finished: $(basename "$task_file")"
+    else
+        mkdir -p "$READY_FOR_QA_DIR/failed"
+        mv "$task_file" "$READY_FOR_QA_DIR/failed/"
+        log "QA FAILED (exit $script_exit) — moved to failed: $(basename "$task_file")"
+    fi
 }
 
 # Main loop
-echo "=== Agent3: QA Agent Started ==="
-echo "Monitoring: $READY_FOR_QA_DIR (task descriptions)"
-echo "Reads implementations from: $OUTPUTS_DIR (actual code)"
-echo "Work items: $TASKS_DIR"
-echo "Check interval: ${CHECK_INTERVAL}s"
+log "=== Agent3: QA Agent Started ==="
+log "Monitoring: $READY_FOR_QA_DIR"
+log "Reports: $QA_FINAL_REPORT_DIR"
+log "Fix tasks: $TASKS_DIR"
+log "Check interval: ${CHECK_INTERVAL}s"
+log "Log file: $LOG_FILE"
 echo "Press Ctrl+C to stop"
 echo ""
 
+echo "idle" > "$STATUS_FILE"
+
 while true; do
-    # Find all task files in ready-for-qa directory
-    task_files=("$READY_FOR_QA_DIR"/task_*.md)
-
-    # Check if any task files exist
-    if [[ -e "${task_files[0]}" ]]; then
-        for task_file in "${task_files[@]}"; do
-            if [[ -f "$task_file" ]]; then
-                create_qa_report "$task_file"
-            fi
-        done
-    fi
-
-    # Wait before next check
+    shopt -s nullglob
+    task_files=("$READY_FOR_QA_DIR"/*.md)
+    shopt -u nullglob
+    for task_file in "${task_files[@]}"; do
+        impl_name=$(basename "$task_file" .md)
+        echo "Processing: $impl_name" > "$STATUS_FILE"
+        create_qa_report "$task_file"
+        echo "idle" > "$STATUS_FILE"
+    done
     sleep $CHECK_INTERVAL
 done

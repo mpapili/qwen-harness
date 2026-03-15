@@ -1,36 +1,36 @@
 #!/bin/bash
 # Agent2: Doer Harness Script
-# Monitors action-items directory and creates implementations
+# Monitors action-items/ for .md files, calls qwen to implement the action item,
+# then moves it to action-items/finished/ (exit 0) or action-items/failed/ (non-zero).
 
 ACTION_ITEMS_DIR="./action-items"
 OUTPUTS_DIR="./outputs"
 READY_FOR_QA_DIR="./ready-for-qa"
 SYSTEM_PROMPT="./system-prompts/agent2-doer.md"
 CHECK_INTERVAL=5
+LOGS_DIR="./agent-logs"
+LOG_FILE="$LOGS_DIR/agent2-doer.log"
 
 # Ensure directories exist
-mkdir -p "$ACTION_ITEMS_DIR" "$OUTPUTS_DIR" "$READY_FOR_QA_DIR"
+mkdir -p "$ACTION_ITEMS_DIR" "$OUTPUTS_DIR" "$READY_FOR_QA_DIR" "$LOGS_DIR"
 
-# Generate unique timestamp for output
-get_timestamp() {
-    date +"%Y%m%d_%H%M%S"
-}
+# Acquire exclusive lock — exit immediately if another instance is running
+LOCK_FILE="$LOGS_DIR/agent2-doer.lock"
+STATUS_FILE="$LOGS_DIR/agent2-doer.status"
+exec 9>"$LOCK_FILE"
+flock -n 9 || { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Agent2] Another instance already running — exiting." | tee -a "$LOG_FILE"; exit 1; }
 
-# Read an action item file
-read_action_item() {
-    local action_file="$1"
-    cat "$action_file"
-}
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"; }
 
 # Process an action item and create implementation
 process_action_item() {
     local action_file="$1"
     local action_name
     action_name=$(basename "$action_file" .md)
-    local timestamp
-    timestamp=$(get_timestamp)
-    local output_file="$OUTPUTS_DIR/implementation_${timestamp}.md"
-    local qa_task_file="$READY_FOR_QA_DIR/task_${timestamp}.md"
+
+    # List existing outputs so qwen extends an existing project rather than creating a new one
+    local existing_outputs
+    existing_outputs=$(ls -1 "$OUTPUTS_DIR" 2>/dev/null | tr '\n' ' ')
 
     # Read the system prompt
     local system_prompt_content
@@ -38,10 +38,10 @@ process_action_item() {
 
     # Read the action item content
     local action_content
-    action_content=$(read_action_item "$action_file")
+    action_content=$(cat "$action_file")
 
     # Create the prompt for qwen
-    local qwen_prompt="You are a Doer Agent. Your job is to implement this action item.
+    local qwen_prompt="You are a Doer Agent. Your job is to implement the action item below.
 
 SYSTEM PROMPT:
 $system_prompt_content
@@ -49,83 +49,73 @@ $system_prompt_content
 ACTION ITEM TO IMPLEMENT:
 $action_content
 
-Your task is to:
-1. Create the implementation as described in the action item
-2. Write code/files as needed
-3. Ensure it works and handles edge cases
-4. Include a README with instructions on how to run/use the implementation
+=== IMPLEMENTATION RULES ===
+1. Implement exactly what the action item describes. Write all code and files needed.
+2. Check the outputs directory FIRST: /workspace/outputs/
+   Existing project(s) already there: $existing_outputs
+   If a relevant project exists, ADD TO IT — do not create a new separate directory.
+3. Include a README with instructions on how to run/use the implementation.
 
-Please provide the complete implementation with all necessary files and a README."
+=== READY-FOR-QA HANDOFF (REQUIRED) ===
+When your implementation is complete, write EXACTLY ONE handoff file to /workspace/ready-for-qa/
+Use a descriptive filename (e.g. greenline_mowers_homepage.md).
 
-    # Call qwen to generate the implementation
-    echo "Processing action item: $action_name"
-    qwen_output=$(qwen --yolo --prompt "$qwen_prompt" 2>&1)
+The file MUST contain:
+- A summary of what was built or changed
+- A '## How to Run' section with the EXACT shell commands to start the app, e.g.:
+    cd /workspace/outputs/my-app
+    python3 -m http.server 8080
+  Then open: http://localhost:8080
+- Any setup steps needed before running
 
-    # Write the implementation output directly to outputs/
-    echo "$qwen_output" > "$output_file"
+DO NOT perform QA yourself. DO NOT run Playwright or browser tests. Just implement and write the handoff file, then stop."
 
-    # Create a summary file
-    cat > "$OUTPUTS_DIR/summary_${timestamp}.txt" << EOF
-Implementation Summary
-======================
-Action Item: $action_name
-Timestamp: $timestamp
-Status: Completed
+    log "Processing action item: $action_name"
+    log "--- qwen output start ---"
+    local run_log
+    run_log=$(mktemp /tmp/qwen-run-XXXXXX.log)
+    export QWEN_PROMPT="$qwen_prompt"
+    script -q -e -c 'qwen --yolo --prompt "$QWEN_PROMPT"' "$run_log" \
+        | sed --unbuffered 's/\x1b\[[0-9;]*[mGKHFJP]//g; s/\r//g' \
+        | tee -a "$LOG_FILE"
+    local script_exit=${PIPESTATUS[0]}
+    unset QWEN_PROMPT
+    rm -f "$run_log"
+    log "--- qwen output end ---"
+    log "qwen exit code: $script_exit"
 
-The implementation has been generated in: $output_file
-EOF
-
-    # Create QA task description file
-    cat > "$qa_task_file" << EOF
-# QA Task: Review $action_name
-
-## Description
-This is a QA task to review the implementation created for the action item: $action_name
-
-## Implementation Location
-The actual implementation files are located in: $OUTPUTS_DIR
-
-## Files to Review
-- $output_file - The generated implementation
-
-## Testing Criteria
-Please review the implementation in the outputs directory and verify it meets the requirements.
-
-## Notes
-Timestamp: $timestamp
-EOF
-
-    echo "Created implementation: $output_file"
-    echo "Created QA task: $qa_task_file"
-
-    # Move the action item to finished directory
-    ACTION_FINISHED_DIR="$ACTION_ITEMS_DIR/finished"
-    mkdir -p "$ACTION_FINISHED_DIR"
-    mv "$action_file" "$ACTION_FINISHED_DIR/"
-    echo "Moved action item to: $ACTION_FINISHED_DIR/"
+    # Move the action item based on exit code
+    if [[ $script_exit -eq 0 ]]; then
+        mkdir -p "$ACTION_ITEMS_DIR/finished"
+        mv "$action_file" "$ACTION_ITEMS_DIR/finished/"
+        log "Action item succeeded — moved to finished: $(basename "$action_file")"
+    else
+        mkdir -p "$ACTION_ITEMS_DIR/failed"
+        mv "$action_file" "$ACTION_ITEMS_DIR/failed/"
+        log "Action item FAILED (exit $script_exit) — moved to failed: $(basename "$action_file")"
+    fi
 }
 
 # Main loop
-echo "=== Agent2: Doer Started ==="
-echo "Monitoring: $ACTION_ITEMS_DIR"
-echo "Output: $OUTPUTS_DIR"
-echo "Check interval: ${CHECK_INTERVAL}s"
+log "=== Agent2: Doer Started ==="
+log "Monitoring: $ACTION_ITEMS_DIR"
+log "Output: $OUTPUTS_DIR"
+log "Check interval: ${CHECK_INTERVAL}s"
+log "Log file: $LOG_FILE"
 echo "Press Ctrl+C to stop"
 echo ""
 
+echo "idle" > "$STATUS_FILE"
+
 while true; do
-    # Find all .md files in action-items directory
+    shopt -s nullglob
     action_files=("$ACTION_ITEMS_DIR"/*.md)
-    
-    # Check if any action item files exist
-    if [[ -e "${action_files[0]}" ]]; then
-        for action_file in "${action_files[@]}"; do
-            if [[ -f "$action_file" ]]; then
-                process_action_item "$action_file"
-            fi
-        done
-    fi
-    
-    # Wait before next check
+    shopt -u nullglob
+    for action_file in "${action_files[@]}"; do
+        action_name=$(basename "$action_file" .md)
+        echo "Processing: $action_name" > "$STATUS_FILE"
+        process_action_item "$action_file"
+        echo "idle" > "$STATUS_FILE"
+    done
     sleep $CHECK_INTERVAL
 done

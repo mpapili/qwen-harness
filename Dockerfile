@@ -18,6 +18,25 @@ RUN curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings
     && apt-get update -y \
     && apt-get install -y docker-ce-cli
 
+# ── Playwright (embedded — no Docker socket needed for browser testing) ────────
+# Install Playwright + Chromium directly into the image so the QA agent can
+# run headless browser tests without spawning child containers.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+
+RUN mkdir -p /opt/playwright-agent \
+    && cd /opt/playwright-agent \
+    && npm init -y \
+    && npm install playwright@1.49.0
+
+# Install Chromium and all its system-library deps in one shot
+RUN cd /opt/playwright-agent \
+    && npx playwright install chromium --with-deps
+
+# Make browsers & node_modules world-readable/executable so the non-root user
+# that qwen runs as (--user $(id -u):$(id -g)) can access them.
+RUN chmod -R a+rX /opt/playwright-agent /opt/playwright-browsers
+# ──────────────────────────────────────────────────────────────────────────────
+
 # Default working directory will be your mounted project
 WORKDIR /workspace
 
