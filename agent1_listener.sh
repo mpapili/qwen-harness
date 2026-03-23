@@ -99,16 +99,15 @@ $task_content
 - The file must follow the action item format from the system prompt above.
 - Once you have written the file, you are done. Stop immediately."
 
-    log "Processing task: $task_name"
-    log "--- qwen output start ---"
+    log "Processing task: $task_name (waiting for LLM slot)"
     local run_log
     run_log=$(mktemp /tmp/qwen-run-XXXXXX.log)
     export QWEN_PROMPT="$qwen_prompt"
     _acquire_llm_slot
-    script -q -e -c 'qwen --yolo --prompt "$QWEN_PROMPT"' "$run_log" \
-        | sed --unbuffered 's/\x1b\[[0-9;]*[mGKHFJP]//g; s/\r//g' \
-        | tee -a "$LOG_FILE"
-    local script_exit=${PIPESTATUS[0]}
+    _wait_for_server
+    log "--- qwen output start ---"
+    _run_qwen "$run_log"
+    local script_exit=$QWEN_EXIT
     _bounce_server
     _release_llm_slot
     unset QWEN_PROMPT

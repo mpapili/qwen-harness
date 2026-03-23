@@ -5,6 +5,10 @@
 # Default number of agents
 export NUM_AGENTS="${NUM_AGENTS:-1}"
 
+# Load global config for agent toggles
+# shellcheck source=config.sh
+source /workspace/config.sh
+
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -39,7 +43,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd /workspace
 
 # Ensure all directories exist
-mkdir -p tasks action-items ready-for-qa outputs agent-logs
+mkdir -p tasks action-items ready-for-qa ready-for-code-review outputs agent-logs
 
 echo "========================================"
 echo "   AGENTIC WORKFLOW CONTROLLER"
@@ -49,13 +53,15 @@ echo "Configuration:"
 echo "  - Number of concurrent agents: $NUM_AGENTS"
 echo "  - Tasks directory: ./tasks (work items for Agent1)"
 echo "  - Action items directory: ./action-items (Agent1 output)"
-echo "  - Ready for QA directory: ./ready-for-qa (task descriptions for Agent3)"
+echo "  - Ready for QA directory: ./ready-for-qa (handoffs for Agent3)"
+echo "  - Ready for code review directory: ./ready-for-code-review (handoffs for Agent4)"
 echo "  - Outputs directory: ./outputs (actual code/implementation)"
 echo ""
 echo "Agent Scripts:"
-echo "  - agent1_listener.sh: Reads tasks, creates action items"
-echo "  - agent2_doer.sh: Reads action items, creates implementations"
-echo "  - agent3_qa.sh: Tests implementations, creates QA reports"
+printf "  - agent1_listener.sh:  Reads tasks, creates action items       [%s]\n" "$( [[ "$AGENT1_LISTENER_ENABLED" == "true" ]] && echo "ON" || echo "OFF" )"
+printf "  - agent2_doer.sh:      Reads action items, creates impls        [%s]\n" "$( [[ "$AGENT2_DOER_ENABLED" == "true" ]] && echo "ON" || echo "OFF" )"
+printf "  - agent3_qa.sh:        UI/functional tests, QA reports          [%s]\n" "$( [[ "$AGENT3_QA_ENABLED" == "true" ]] && echo "ON" || echo "OFF" )"
+printf "  - agent4_pr_review.sh: Code review + unit tests, review reports [%s]\n" "$( [[ "$AGENT4_PR_REVIEW_ENABLED" == "true" ]] && echo "ON" || echo "OFF" )"
 echo ""
 echo "Starting agents..."
 echo "Press Ctrl+C to stop all agents"
@@ -126,11 +132,20 @@ trap stop_all_agents SIGINT SIGTERM
 
 # Start the agents with a 1-second delay between each to avoid race conditions
 # Each agent script can spawn qwen commands, so we're managing the agent processes
-start_agent "listener" "/workspace/agent1_listener.sh" "Agent1 Listener" "$LOGS_DIR/agent1-listener.status"
-sleep 1
-start_agent "doer" "/workspace/agent2_doer.sh" "Agent2 Doer" "$LOGS_DIR/agent2-doer.status"
-sleep 1
-start_agent "qa" "/workspace/agent3_qa.sh" "Agent3 QA" "$LOGS_DIR/agent3-qa.status"
+_maybe_start() {
+    local enabled="$1"; shift
+    if [[ "$enabled" == "true" ]]; then
+        start_agent "$@"
+        sleep 1
+    else
+        echo "[Agent] Skipping $3 (disabled in config)"
+    fi
+}
+
+_maybe_start "$AGENT1_LISTENER_ENABLED"  "listener"   "/workspace/agent1_listener.sh"  "Agent1 Listener"   "$LOGS_DIR/agent1-listener.status"
+_maybe_start "$AGENT2_DOER_ENABLED"      "doer"       "/workspace/agent2_doer.sh"       "Agent2 Doer"       "$LOGS_DIR/agent2-doer.status"
+_maybe_start "$AGENT3_QA_ENABLED"        "qa"         "/workspace/agent3_qa.sh"         "Agent3 QA"         "$LOGS_DIR/agent3-qa.status"
+_maybe_start "$AGENT4_PR_REVIEW_ENABLED" "pr-review"  "/workspace/agent4_pr_review.sh"  "Agent4 PR Review"  "$LOGS_DIR/agent4-pr-review.status"
 
 echo ""
 echo "========================================"

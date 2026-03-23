@@ -20,7 +20,8 @@ fi
 
 # Pre-create all runtime dirs so the bind mounts have targets on the host
 mkdir -p "$SCRIPT_DIR/tasks" "$SCRIPT_DIR/action-items" "$SCRIPT_DIR/outputs" \
-         "$SCRIPT_DIR/ready-for-qa" "$SCRIPT_DIR/agent-logs" "$SCRIPT_DIR/screenshots"
+         "$SCRIPT_DIR/ready-for-qa" "$SCRIPT_DIR/ready-for-code-review" \
+         "$SCRIPT_DIR/agent-logs" "$SCRIPT_DIR/screenshots"
 # .playwright-session.json must exist as a file before it can be bind-mounted
 touch "$SCRIPT_DIR/.playwright-session.json"
 
@@ -31,6 +32,7 @@ docker run --rm -it \
   -v "$SCRIPT_DIR/action-items:/workspace/action-items:Z" \
   -v "$SCRIPT_DIR/outputs:/workspace/outputs:Z" \
   -v "$SCRIPT_DIR/ready-for-qa:/workspace/ready-for-qa:Z" \
+  -v "$SCRIPT_DIR/ready-for-code-review:/workspace/ready-for-code-review:Z" \
   -v "$SCRIPT_DIR/agent-logs:/workspace/agent-logs:Z" \
   -v "$SCRIPT_DIR/screenshots:/workspace/screenshots:Z" \
   -v "$SCRIPT_DIR/.playwright-session.json:/workspace/.playwright-session.json:Z" \

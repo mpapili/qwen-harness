@@ -43,6 +43,28 @@ Run `inspect` before any `click` to get real selectors from the live DOM. Never 
 
 After every action that produces a screenshot, inspect it using your built-in image viewer — do NOT spawn a nested `qwen --yolo` subprocess.
 
+#### WebGL / 3D Graphics Support
+When testing web apps with WebGL/3D graphics (ThreeJS, Babylon.js, etc.), Chromium in headless mode has no GPU access. **You MUST enable software WebGL rendering via SwiftShader.**
+
+If you write custom Playwright test scripts (outside of `playwright-tool.sh`), include these flags in `chromium.launch()`:
+```javascript
+chromium.launch({
+  headless: true,
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--use-gl=angle',
+    '--use-angle=swiftshader',
+    '--enable-webgl',
+    '--enable-webgl2',
+    '--ignore-gpu-blocklist',
+    '--disable-gpu-sandbox',
+  ]
+})
+```
+
+Without these flags, WebGL will silently fail and 3D content renders as black.
+
 Classify every screenshot with exactly one label:
 | Label | When to use |
 |-------|-------------|

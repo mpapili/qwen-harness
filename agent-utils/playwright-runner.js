@@ -62,6 +62,12 @@ async function handleStartBrowser(state) {
     '--window-size=1920,1080',
     '--user-data-dir=/tmp/pw-profile',
     '--disable-cache',
+    '--use-gl=angle',
+    '--use-angle=swiftshader',
+    '--enable-webgl',
+    '--enable-webgl2',
+    '--ignore-gpu-blocklist',
+    '--disable-gpu-sandbox',
     'about:blank',
   ], { detached: true, stdio: 'ignore' });
   proc.unref();
@@ -117,7 +123,16 @@ async function run() {
   if (!usingCDP) {
     browser = await chromium.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--use-gl=angle',
+        '--use-angle=swiftshader',
+        '--enable-webgl',
+        '--enable-webgl2',
+        '--ignore-gpu-blocklist',
+        '--disable-gpu-sandbox',
+      ],
     });
     context = await browser.newContext({
       viewport: { width: 1920, height: 1080 },

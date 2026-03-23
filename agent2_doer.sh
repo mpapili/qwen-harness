@@ -6,6 +6,7 @@
 ACTION_ITEMS_DIR="./action-items"
 OUTPUTS_DIR="./outputs"
 READY_FOR_QA_DIR="./ready-for-qa"
+CODE_REVIEW_DIR="./ready-for-code-review"
 SYSTEM_PROMPT="/workspace/system-prompts/agent2-doer.md"
 CHECK_INTERVAL=5
 LOGS_DIR="./agent-logs"
@@ -17,7 +18,7 @@ NUM_AGENTS="${NUM_AGENTS:-1}"
 source /workspace/config.sh
 
 # Ensure directories exist
-mkdir -p "$ACTION_ITEMS_DIR" "$OUTPUTS_DIR" "$READY_FOR_QA_DIR" "$LOGS_DIR"
+mkdir -p "$ACTION_ITEMS_DIR" "$OUTPUTS_DIR" "$READY_FOR_QA_DIR" "$CODE_REVIEW_DIR" "$LOGS_DIR"
 
 # Acquire exclusive lock — exit immediately if another instance is running
 LOCK_FILE="$LOGS_DIR/agent2-doer.lock"
@@ -70,6 +71,21 @@ process_action_item() {
     local existing_outputs
     existing_outputs=$(ls -1 "$OUTPUTS_DIR" 2>/dev/null | tr '\n' ' ')
 
+    # Read SITE_INDEX.md and README.md from outputs if they exist (project context)
+    local outputs_context=""
+    if [[ -f "$OUTPUTS_DIR/SITE_INDEX.md" ]]; then
+        outputs_context="${outputs_context}
+
+=== outputs/SITE_INDEX.md ===
+$(cat "$OUTPUTS_DIR/SITE_INDEX.md")"
+    fi
+    if [[ -f "$OUTPUTS_DIR/README.md" ]]; then
+        outputs_context="${outputs_context}
+
+=== outputs/README.md ===
+$(cat "$OUTPUTS_DIR/README.md")"
+    fi
+
     # Read the system prompt
     local system_prompt_content
     system_prompt_content=$(cat "$SYSTEM_PROMPT")
@@ -95,7 +111,10 @@ $action_content
 1. Implement exactly what the action item describes. Write all code and files needed.
 2. Check the outputs directory FIRST: /workspace/outputs/
    Existing project(s) already there: $existing_outputs
-   If a relevant project exists, ADD TO IT — do not create a new separate directory.
+   If a relevant project exists, ADD TO IT — do not create a new separate directory.${outputs_context:+
+
+=== EXISTING PROJECT CONTEXT ===
+$outputs_context}
 3. Include a README with instructions on how to run/use the implementation.
 
 === READY-FOR-QA HANDOFF (REQUIRED) ===
@@ -112,16 +131,19 @@ The file MUST contain:
 
 DO NOT perform QA yourself. DO NOT run Playwright or browser tests. Just implement and write the handoff file, then stop."
 
-    log "Processing action item: $action_name"
-    log "--- qwen output start ---"
+    # Snapshot ready-for-qa before qwen runs so we can detect new handoff files
+    local qa_before
+    qa_before=$(ls -1 "$READY_FOR_QA_DIR"/*.md 2>/dev/null | sort || true)
+
+    log "Processing action item: $action_name (waiting for LLM slot)"
     local run_log
     run_log=$(mktemp /tmp/qwen-run-XXXXXX.log)
     export QWEN_PROMPT="$qwen_prompt"
     _acquire_llm_slot
-    script -q -e -c 'qwen --yolo --prompt "$QWEN_PROMPT"' "$run_log" \
-        | sed --unbuffered 's/\x1b\[[0-9;]*[mGKHFJP]//g; s/\r//g' \
-        | tee -a "$LOG_FILE"
-    local script_exit=${PIPESTATUS[0]}
+    _wait_for_server
+    log "--- qwen output start ---"
+    _run_qwen "$run_log"
+    local script_exit=$QWEN_EXIT
     _bounce_server
     _release_llm_slot
     unset QWEN_PROMPT
@@ -129,8 +151,31 @@ DO NOT perform QA yourself. DO NOT run Playwright or browser tests. Just impleme
     log "--- qwen output end ---"
     log "qwen exit code: $script_exit"
 
-    # Move the action item based on exit code
+    # On success, fan out any new handoff files to the enabled downstream agents
     if [[ $script_exit -eq 0 ]]; then
+        local qa_after
+        qa_after=$(ls -1 "$READY_FOR_QA_DIR"/*.md 2>/dev/null | sort || true)
+        local new_handoffs
+        new_handoffs=$(comm -13 <(echo "$qa_before") <(echo "$qa_after") | grep -v '^$' || true)
+
+        if [[ -n "$new_handoffs" ]]; then
+            # Copy to code-review queue if agent4 is enabled
+            if [[ "${AGENT4_PR_REVIEW_ENABLED:-true}" == "true" ]]; then
+                mkdir -p "$CODE_REVIEW_DIR"
+                while IFS= read -r hf; do
+                    cp "$hf" "$CODE_REVIEW_DIR/"
+                    log "Routed handoff to code review: $(basename "$hf")"
+                done <<< "$new_handoffs"
+            fi
+            # Remove from QA queue if agent3 is disabled
+            if [[ "${AGENT3_QA_ENABLED:-true}" != "true" ]]; then
+                while IFS= read -r hf; do
+                    rm -f "$hf"
+                    log "Agent3 disabled — removed from QA queue: $(basename "$hf")"
+                done <<< "$new_handoffs"
+            fi
+        fi
+
         mkdir -p "$ACTION_ITEMS_DIR/finished"
         mv "$action_file" "$ACTION_ITEMS_DIR/finished/"
         log "Action item succeeded — moved to finished: $(basename "$action_file")"
