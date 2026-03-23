@@ -14,3 +14,6 @@ tasks/
 
 # ── Local IDE / tool config ───────────────────────────────────────────────────
 .claude/
+
+# Docs Dump
+docs-dump/
