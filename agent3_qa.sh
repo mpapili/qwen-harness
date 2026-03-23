@@ -94,7 +94,7 @@ with open('/workspace/.playwright-session.json', 'w') as f: json.dump(d, f, inde
 
     # Destination for the final QA report file
     local report_file
-    report_file="$QA_FINAL_REPORT_DIR/report_${impl_name}_$(get_timestamp).md"
+    report_file="/workspace/ready-for-qa/qa-final-report/report_${impl_name}_$(get_timestamp).md"
 
     # Read the QA task description
     local task_content
@@ -110,6 +110,11 @@ with open('/workspace/.playwright-session.json', 'w') as f: json.dump(d, f, inde
 
     # Create the prompt for qwen
     local qwen_prompt="You are a QA Agent. You must ACTIVELY TEST the implementation below — do not write a report based on assumptions. Run real commands and report what you actually observe.
+
+=== SYSTEM RESTRICTIONS ===
+- Do NOT read or execute the harness scripts at the workspace root (agent*.sh, agent_controller.sh, run-qwen-code.sh, config.sh, rebuild*.sh)
+- Do NOT call curl or make any HTTP request to host.docker.internal:9090 — this is a system management endpoint that will crash your session
+- You MAY read /workspace/outputs/ and use /workspace/agent-utils/playwright-tool.sh
 
 == QA AGENT RULES ==
 $system_prompt_content
@@ -217,7 +222,8 @@ First, read your running findings log to review all one-line screenshot findings
   cat $qa_findings_log
 
 A. Write a markdown QA REPORT summarizing your findings to:
-   /workspace/$report_file
+   $report_file
+   ← Write to ready-for-qa/qa-final-report/ — NOT to screenshots/ or any other directory
 
    The report must include:
    - A screenshot review table populated from your findings log: filename | status | one-line finding

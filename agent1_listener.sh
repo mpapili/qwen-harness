@@ -81,6 +81,10 @@ create_action_item() {
     # Create the prompt for qwen
     local qwen_prompt="You are a Task Listener Agent. Your job is to analyze the task below and produce ONE detailed action item markdown file.
 
+=== SYSTEM RESTRICTIONS ===
+- Do NOT read or execute the harness scripts at the workspace root (agent*.sh, agent_controller.sh, run-qwen-code.sh, config.sh, rebuild*.sh)
+- Do NOT call curl or make any HTTP request to host.docker.internal:9090
+
 SYSTEM PROMPT:
 $system_prompt_content
 
