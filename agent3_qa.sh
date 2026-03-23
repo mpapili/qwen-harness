@@ -266,13 +266,12 @@ C. Clean up the findings log now that the final report is written:
         | sed --unbuffered 's/\x1b\[[0-9;]*[mGKHFJP]//g; s/\r//g' \
         | tee -a "$LOG_FILE"
     local script_exit=${PIPESTATUS[0]}
+    _bounce_server
     _release_llm_slot
     unset QWEN_PROMPT
     rm -f "$run_log"
     log "--- qwen output end ---"
     log "qwen exit code: $script_exit"
-
-    _bounce_server
 
     # Clean up scratch dir
     rm -rf "$qa_tmpdir"

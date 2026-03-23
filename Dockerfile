@@ -37,6 +37,9 @@ RUN cd /opt/playwright-agent \
 RUN chmod -R a+rX /opt/playwright-agent /opt/playwright-browsers
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Pre-create qwen settings with no timeout limit (HOME=/tmp at runtime)
+RUN mkdir -p /tmp/.qwen && printf '{\n  "contentGenerator": {\n    "timeout": 3600000\n  }\n}\n' > /tmp/.qwen/settings.json && chmod -R 777 /tmp/.qwen
+
 # Default working directory will be your mounted project
 WORKDIR /workspace
 
