@@ -36,10 +36,10 @@ fi
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+cd /workspace
 
 # Ensure all directories exist
-mkdir -p tasks action-items ready-for-qa system-prompts outputs
+mkdir -p tasks action-items ready-for-qa outputs agent-logs
 
 echo "========================================"
 echo "   AGENTIC WORKFLOW CONTROLLER"
@@ -95,9 +95,6 @@ start_agent() {
 
     echo "[Agent] Starting $agent_name..."
 
-    # Make script executable if needed
-    chmod +x "$agent_script"
-
     # Start the agent in background
     bash "$agent_script" &
     local pid=$!
@@ -129,11 +126,11 @@ trap stop_all_agents SIGINT SIGTERM
 
 # Start the agents with a 1-second delay between each to avoid race conditions
 # Each agent script can spawn qwen commands, so we're managing the agent processes
-start_agent "listener" "./agent1_listener.sh" "Agent1 Listener" "$LOGS_DIR/agent1-listener.status"
+start_agent "listener" "/workspace/agent1_listener.sh" "Agent1 Listener" "$LOGS_DIR/agent1-listener.status"
 sleep 1
-start_agent "doer" "./agent2_doer.sh" "Agent2 Doer" "$LOGS_DIR/agent2-doer.status"
+start_agent "doer" "/workspace/agent2_doer.sh" "Agent2 Doer" "$LOGS_DIR/agent2-doer.status"
 sleep 1
-start_agent "qa" "./agent3_qa.sh" "Agent3 QA" "$LOGS_DIR/agent3-qa.status"
+start_agent "qa" "/workspace/agent3_qa.sh" "Agent3 QA" "$LOGS_DIR/agent3-qa.status"
 
 echo ""
 echo "========================================"

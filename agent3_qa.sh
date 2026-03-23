@@ -7,11 +7,15 @@ READY_FOR_QA_DIR="./ready-for-qa"
 QA_FINAL_REPORT_DIR="./ready-for-qa/qa-final-report"
 OUTPUTS_DIR="./outputs"
 TASKS_DIR="./tasks"
-SYSTEM_PROMPT="./system-prompts/agent3-qa.md"
+SYSTEM_PROMPT="/workspace/system-prompts/agent3-qa.md"
 CHECK_INTERVAL=5
 LOGS_DIR="./agent-logs"
 LOG_FILE="$LOGS_DIR/agent3-qa.log"
 NUM_AGENTS="${NUM_AGENTS:-1}"
+
+# Load global config (bounce settings, etc.)
+# shellcheck source=config.sh
+source /workspace/config.sh
 
 # Ensure directories exist
 mkdir -p "$READY_FOR_QA_DIR" "$QA_FINAL_REPORT_DIR" "$OUTPUTS_DIR" "$TASKS_DIR" "$LOGS_DIR"
@@ -41,6 +45,20 @@ _acquire_llm_slot() {
 
 _release_llm_slot() {
     exec 10>&-
+}
+
+# Bounce the llama.cpp server between sessions; sleep if successful
+_bounce_server() {
+    local url="http://${LLAMA_CPP_HOST}:${LLAMA_CPP_BOUNCE_PORT}/bounce"
+    log "Bouncing llama.cpp server at $url ..."
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$url" --max-time 10)
+    if [[ "$http_code" == "200" ]]; then
+        log "Bounce successful (HTTP $http_code) — sleeping ${BOUNCE_SLEEP_SECONDS}s"
+        sleep "$BOUNCE_SLEEP_SECONDS"
+    else
+        log "WARNING: Bounce returned HTTP $http_code — continuing without sleep"
+    fi
 }
 
 # Generate unique timestamp
@@ -253,6 +271,8 @@ C. Clean up the findings log now that the final report is written:
     rm -f "$run_log"
     log "--- qwen output end ---"
     log "qwen exit code: $script_exit"
+
+    _bounce_server
 
     # Clean up scratch dir
     rm -rf "$qa_tmpdir"

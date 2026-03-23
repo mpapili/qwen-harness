@@ -6,11 +6,15 @@
 ACTION_ITEMS_DIR="./action-items"
 OUTPUTS_DIR="./outputs"
 READY_FOR_QA_DIR="./ready-for-qa"
-SYSTEM_PROMPT="./system-prompts/agent2-doer.md"
+SYSTEM_PROMPT="/workspace/system-prompts/agent2-doer.md"
 CHECK_INTERVAL=5
 LOGS_DIR="./agent-logs"
 LOG_FILE="$LOGS_DIR/agent2-doer.log"
 NUM_AGENTS="${NUM_AGENTS:-1}"
+
+# Load global config (bounce settings, etc.)
+# shellcheck source=config.sh
+source /workspace/config.sh
 
 # Ensure directories exist
 mkdir -p "$ACTION_ITEMS_DIR" "$OUTPUTS_DIR" "$READY_FOR_QA_DIR" "$LOGS_DIR"
@@ -40,6 +44,20 @@ _acquire_llm_slot() {
 
 _release_llm_slot() {
     exec 10>&-
+}
+
+# Bounce the llama.cpp server between sessions; sleep if successful
+_bounce_server() {
+    local url="http://${LLAMA_CPP_HOST}:${LLAMA_CPP_BOUNCE_PORT}/bounce"
+    log "Bouncing llama.cpp server at $url ..."
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$url" --max-time 10)
+    if [[ "$http_code" == "200" ]]; then
+        log "Bounce successful (HTTP $http_code) — sleeping ${BOUNCE_SLEEP_SECONDS}s"
+        sleep "$BOUNCE_SLEEP_SECONDS"
+    else
+        log "WARNING: Bounce returned HTTP $http_code — continuing without sleep"
+    fi
 }
 
 # Process an action item and create implementation
@@ -105,6 +123,8 @@ DO NOT perform QA yourself. DO NOT run Playwright or browser tests. Just impleme
     rm -f "$run_log"
     log "--- qwen output end ---"
     log "qwen exit code: $script_exit"
+
+    _bounce_server
 
     # Move the action item based on exit code
     if [[ $script_exit -eq 0 ]]; then

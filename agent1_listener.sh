@@ -5,11 +5,15 @@
 
 TASKS_DIR="./tasks"
 ACTION_ITEMS_DIR="./action-items"
-SYSTEM_PROMPT="./system-prompts/agent1-listener.md"
+SYSTEM_PROMPT="/workspace/system-prompts/agent1-listener.md"
 CHECK_INTERVAL=5
 LOGS_DIR="./agent-logs"
 LOG_FILE="$LOGS_DIR/agent1-listener.log"
 NUM_AGENTS="${NUM_AGENTS:-1}"
+
+# Load global config (bounce settings, etc.)
+# shellcheck source=config.sh
+source /workspace/config.sh
 
 # Ensure directories exist
 mkdir -p "$TASKS_DIR" "$ACTION_ITEMS_DIR" "$LOGS_DIR"
@@ -39,6 +43,20 @@ _acquire_llm_slot() {
 
 _release_llm_slot() {
     exec 10>&-
+}
+
+# Bounce the llama.cpp server between sessions; sleep if successful
+_bounce_server() {
+    local url="http://${LLAMA_CPP_HOST}:${LLAMA_CPP_BOUNCE_PORT}/bounce"
+    log "Bouncing llama.cpp server at $url ..."
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$url" --max-time 10)
+    if [[ "$http_code" == "200" ]]; then
+        log "Bounce successful (HTTP $http_code) — sleeping ${BOUNCE_SLEEP_SECONDS}s"
+        sleep "$BOUNCE_SLEEP_SECONDS"
+    else
+        log "WARNING: Bounce returned HTTP $http_code — continuing without sleep"
+    fi
 }
 
 # Read a task file and get its name
@@ -92,6 +110,8 @@ $task_content
     rm -f "$run_log"
     log "--- qwen output end ---"
     log "qwen exit code: $script_exit"
+
+    _bounce_server
 
     # Move the task file based on exit code
     if [[ $script_exit -eq 0 ]]; then

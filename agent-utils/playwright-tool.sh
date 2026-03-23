@@ -38,7 +38,7 @@ PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-/opt/playwright-browsers}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
 SCREENSHOTS_DIR="$WORKSPACE_DIR/screenshots"
 STATE_FILE="$WORKSPACE_DIR/.playwright-session.json"
-RUNNER_SCRIPT="$WORKSPACE_DIR/agent-utils/playwright-runner.js"
+RUNNER_SCRIPT="/workspace/agent-utils/playwright-runner.js"
 
 ACTION="${1:-}"
 
