@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# Prompt user for tarball name
+read -p "Enter a name for the output tarball (without .tar.gz): " tarball_name
+
+# Validate input
+if [ -z "$tarball_name" ]; then
+    echo "Error: Tarball name cannot be empty"
+    exit 1
+fi
+
+# Add .tar.gz extension if not already present
+if [[ ! "$tarball_name" =~ \.tar\.gz$ ]]; then
+    tarball_name="${tarball_name}.tar.gz"
+fi
+
+# Check if outputs directory exists
+if [ ! -d "outputs" ]; then
+    echo "Error: outputs/ directory not found in current directory"
+    exit 1
+fi
+
+# Create the tarball
+tar -czf "$tarball_name" outputs/
+
+if [ $? -eq 0 ]; then
+    echo "Successfully created $tarball_name"
+else
+    echo "Error: Failed to create tarball"
+    exit 1
+fi

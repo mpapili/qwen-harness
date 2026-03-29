@@ -22,3 +22,6 @@ memory/
 
 # Docs Dump
 docs-dump/
+
+# backed up outputs
+*.tar.gz
