@@ -123,22 +123,37 @@ Evaluate the code for:
 - Completeness: Are all required features present and implemented?
 - Maintainability: Is the code readable and reasonably structured?
 
-STEP 3 — STATIC ANALYSIS (run all three tools; record every finding)
+STEP 3 — STATIC ANALYSIS (run all five tools; record every finding)
+
+CRITICAL: All npx commands MUST use --yes and < /dev/null to avoid hanging on interactive prompts.
 
 Tool 1 — TypeScript/JavaScript type checking
   Run against every .js and .ts file found in /workspace/outputs/:
-    npx tsc --noEmit --allowJs --checkJs <file>
+    npx --yes tsc --noEmit --allowJs --checkJs --strict <file> < /dev/null 2>&1
+  Or if tsconfig.json exists: npx --yes tsc --noEmit < /dev/null 2>&1 (from project root)
   Any TS error = HIGH finding. Any TS warning = MEDIUM finding.
 
-Tool 2 — HTML validation
+Tool 2 — ESLint code quality
+  Run against every .js and .ts file found in /workspace/outputs/:
+    npx --yes eslint --no-eslintrc --env browser,es2021 --rule '{"no-undef":"error","no-unused-vars":"warn","no-unreachable":"error","no-constant-condition":"error"}' <file> < /dev/null 2>&1
+  Or if .eslintrc.* exists: npx --yes eslint <file> < /dev/null 2>&1
+  `error` rules = HIGH finding. `warn` rules = LOW finding.
+
+Tool 3 — HTML validation
   Run against every .html file found in /workspace/outputs/:
-    npx html-validate <file>
+    npx --yes html-validate <file> < /dev/null 2>&1
   Validation errors = MEDIUM finding (require a fix task).
 
-Tool 3 — Broken link checker
+Tool 4 — CSS linting
+  Run against every .css file found in /workspace/outputs/:
+    npx --yes stylelint <file> < /dev/null 2>&1
+  Or if .stylelintrc.* exists: npx --yes stylelint <file> < /dev/null 2>&1
+  Errors = MEDIUM finding. Warnings = LOW finding.
+
+Tool 5 — Broken link checker
   Run against every .html file found in /workspace/outputs/:
-    npx broken-link-checker --path <file>
-  Any broken link = HIGH finding (requires a fix task).
+    npx --yes linkinator <file> --skip "^http" < /dev/null 2>&1
+  Any unresolvable local link = HIGH finding (requires a fix task).
 
 If a file type does not exist in the implementation, record "N/A — no matching files" for that tool.
 

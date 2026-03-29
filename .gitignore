@@ -7,6 +7,7 @@ scratch/
 # ── Agent runtime queues & reports ───────────────────────────────────────────
 action-items/
 ready-for-qa/
+ready-for-code-review/
 tasks/
 
 # ── Playwright session state ──────────────────────────────────────────────────
@@ -14,6 +15,10 @@ tasks/
 
 # ── Local IDE / tool config ───────────────────────────────────────────────────
 .claude/
+memory/
+
+# ── Environment variables ──────────────────────────────────────────────────────
+.env
 
 # Docs Dump
 docs-dump/
